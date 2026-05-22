@@ -19,6 +19,7 @@ A minimal Python starter for running a [Bright Data Scraper Studio](https://brig
 - [How it works](#how-it-works)
 - [Examples](#examples)
 - [Output](#output)
+- [Security](#security)
 - [Support](#support)
 - [License](#license)
 
@@ -186,6 +187,18 @@ Saved to scraper_studio_results_2026-05-22T10-30-45-123456.json
 
 Done.
 ```
+
+---
+
+## Security
+
+Never commit your `.env` file. The shipped `.gitignore` blocks `.env` and `.env.local`.
+
+If you accidentally commit a real `BRIGHT_DATA_API_TOKEN`:
+
+1. Rotate the token immediately at [brightdata.com/cp/setting](https://brightdata.com/cp/setting).
+2. Use [`git filter-repo`](https://github.com/newren/git-filter-repo) or [BFG Repo-Cleaner](https://rtyley.github.io/bfg-repo-cleaner/) to remove the secret from history.
+3. Force-push and notify anyone who may have cloned the leak.
 
 ---
 
