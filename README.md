@@ -19,7 +19,6 @@ A minimal Python starter for running a [Bright Data Scraper Studio](https://brig
 - [How it works](#how-it-works)
 - [Examples](#examples)
 - [Output](#output)
-- [Security](#security)
 - [Support](#support)
 - [License](#license)
 
@@ -187,12 +186,6 @@ Saved to scraper_studio_results_2026-05-22T10-30-45-123456.json
 
 Done.
 ```
-
----
-
-## Security
-
-Never commit your `.env` file. The shipped `.gitignore` blocks `.env` and `.env.local`. To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ---
 
