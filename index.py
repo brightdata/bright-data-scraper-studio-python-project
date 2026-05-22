@@ -20,8 +20,8 @@ init(autoreset=True)
 # CONFIGURATION
 # Set via .env (recommended) or override the fallbacks here.
 # ========================================
-API_TOKEN    = os.environ.get('BRIGHT_DATA_API_TOKEN', 'BRIGHT_DATA_API_KEY')
-COLLECTOR_ID = os.environ.get('BRIGHT_DATA_COLLECTOR_ID', 'YOUR_COLLECTOR_ID')
+API_TOKEN    = os.environ.get('BRIGHT_DATA_API_TOKEN')    or 'BRIGHT_DATA_API_KEY'
+COLLECTOR_ID = os.environ.get('BRIGHT_DATA_COLLECTOR_ID') or 'YOUR_COLLECTOR_ID'
 
 API_BASE          = 'https://api.brightdata.com'
 POLL_INTERVAL_S   = 5
