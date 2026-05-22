@@ -33,7 +33,7 @@ This project provides a minimal Python boilerplate for running a [Bright Data Sc
 | 1 | `POST /dca/trigger?collector=<id>` | Queue one or more inputs for the collector |
 | 2 | `GET  /dca/dataset?id=<snapshot_id>` | Download the collected data when ready |
 
-This repository wraps those two calls in roughly 100 lines of Python so you can copy, paste, and ship.
+This repository wraps those two calls in roughly 150 lines of Python so you can copy, paste, and ship.
 
 ---
 
@@ -41,8 +41,10 @@ This repository wraps those two calls in roughly 100 lines of Python so you can 
 
 - Trigger a Scraper Studio collector via the `/dca/trigger` endpoint
 - Poll `/dca/dataset` until results are ready
+- **Env-var config** via `.env` (no secrets in code)
+- **Retry with exponential backoff** for transient errors (5xx, network); fails fast on 4xx
+- Library helpers: `trigger_with_url`, `trigger_with_urls`, `run_scraper`
 - Save the raw JSON response to a timestamped file
-- Dependencies kept to [`requests`](https://pypi.org/project/requests/) and [`colorama`](https://pypi.org/project/colorama/)
 
 ---
 
@@ -60,44 +62,45 @@ This repository wraps those two calls in roughly 100 lines of Python so you can 
 git clone https://github.com/brightdata/bright-data-scraper-studio-python-project.git
 cd bright-data-scraper-studio-python-project
 pip install -r requirements.txt
+cp .env.example .env       # then edit .env with your token and collector ID
 ```
 
 ### Dependencies
 
 - `requests` - HTTP client for the Bright Data API
 - `colorama` - colored terminal output
+- `python-dotenv` - load `.env` files into `os.environ`
 
 ---
 
 ## Usage
 
-1. **Set your API token and Collector ID**
+```bash
+python index.py
+```
 
-   Edit [`index.py`](index.py):
-
-   ```python
-   API_TOKEN    = 'YOUR_BRIGHT_DATA_API_KEY'
-   COLLECTOR_ID = 'c_xxxxxxxxxxxxxxxx'
-   ```
-
-2. **Run the scraper**
-
-   ```bash
-   python index.py
-   ```
-
-   Results are written to a `scraper_studio_results_<timestamp>.json` file in the project directory.
+Results are written to a `scraper_studio_results_<timestamp>.json` file in the project directory.
 
 ---
 
 ## Configuration
 
+Two environment variables are required - set them in `.env`, in your shell, or hardcode them in [`index.py`](index.py):
+
 | Variable | Where to find it |
 | --- | --- |
-| `API_TOKEN`    | Bright Data dashboard - Account Settings - [API Tokens](https://brightdata.com/cp/setting) |
-| `COLLECTOR_ID` | Scraper Studio - open your collector - the ID in the URL (starts with `c_`) |
+| `BRIGHT_DATA_API_TOKEN`    | Bright Data dashboard - Account Settings - [API Tokens](https://brightdata.com/cp/setting) |
+| `BRIGHT_DATA_COLLECTOR_ID` | Scraper Studio - open your collector - the ID in the URL (starts with `c_`) |
 
-The shape of `SAMPLE_URLS` in `index.py` must match the **input schema** you defined in Scraper Studio. The default sample assumes a single `url` field - if your collector uses different inputs (for example, `keyword`, `zip_code`, `category`), update the dictionaries accordingly.
+You can also tune the polling and retry behavior at the top of `index.py`:
+
+```python
+POLL_INTERVAL_S   = 5    # delay between dataset checks (seconds)
+MAX_POLL_ATTEMPTS = 60   # give up after ~5 minutes
+MAX_RETRIES       = 3    # for transient HTTP failures
+```
+
+The shape of `SAMPLE_URLS` must match the **input schema** you defined in Scraper Studio. The default sample assumes a single `url` field - if your collector uses different inputs (for example, `keyword`, `zip_code`, `category`), update the dictionaries accordingly.
 
 ---
 
@@ -110,13 +113,13 @@ The shape of `SAMPLE_URLS` in `index.py` must match the **input schema** you def
        +-----------------+                             +-------------------+
                 |                                                |
                 |  GET /dca/dataset?id=<snapshot_id>             |
-                |  (poll every 5s)                               |
+                |  (poll every 5s, retry 5xx with backoff)       |
                 |  <--- [ { ...record... }, ... ] -------------- |
                 v
        scraper_studio_results_<timestamp>.json
 ```
 
-The script polls `/dca/dataset` every 5 seconds for up to 5 minutes. A non-empty JSON array is treated as a finished snapshot.
+The script polls `/dca/dataset` every 5 seconds for up to 5 minutes. A non-empty JSON array is treated as a finished snapshot. Transient errors (5xx, network) are retried with exponential backoff (1s, 2s, 4s); 4xx errors fail immediately so you fix the request rather than retry it.
 
 ---
 
@@ -133,14 +136,29 @@ SAMPLE_URLS = [
 ]
 ```
 
-### Use as a library
+### Custom input schema
 
-`run_scraper` and `save_results` are top-level functions so you can import them into your own pipeline:
+If your collector expects something other than `url`, pass whatever fields it defines:
 
 ```python
-from index import run_scraper, save_results
+inputs = [
+    {"keyword": "wireless headphones", "country": "US"},
+    {"keyword": "standing desk",       "country": "DE"},
+]
+run_scraper(inputs)
+```
 
-data = run_scraper([{"url": "https://example.com"}])
+### Use as a library
+
+`run_scraper`, `trigger_with_url`, `trigger_with_urls`, and `save_results` are top-level functions:
+
+```python
+from index import trigger_with_urls, save_results
+
+data = trigger_with_urls([
+    "https://example.com/page-1",
+    "https://example.com/page-2",
+])
 save_results(data, "my_run.json")
 ```
 
@@ -158,16 +176,11 @@ Bright Data Scraper Studio
 ==============================
 Starting Scraper Studio collector...
 Queueing 3 input(s)
-Request body:
-[
-  {"url": "https://ecommerce-shop-brd.vercel.app/product/echo-portable-speaker"},
-  ...
-]
-Job queued. Snapshot ID: s_abc123
+Job queued. Snapshot ID: j_abc123
 Polling for results...
 Attempt 1/60 - building
 Attempt 2/60 - building
-Attempt 3/60 - ready
+Attempt 3/60 - building
 Results downloaded.
 Saved to scraper_studio_results_2026-05-22T10-30-45-123456.json
 
