@@ -1,29 +1,37 @@
 # Scraper Studio - Bright Data API
 # Simple Python boilerplate
-# Install: pip install -r requirements.txt
-# Run:     python index.py
+# Install:   pip install -r requirements.txt
+# Configure: cp .env.example .env  (then edit values)
+# Run:       python index.py
 
 import json
+import os
 import time
 from datetime import datetime
 
 import requests
 from colorama import Fore, Style, init
+from dotenv import load_dotenv
 
+load_dotenv()
 init(autoreset=True)
 
 # ========================================
 # CONFIGURATION
+# Set via .env (recommended) or override the fallbacks here.
 # ========================================
-API_TOKEN    = 'BRIGHT_DATA_API_KEY'   # Account Settings -> API Key
-COLLECTOR_ID = 'YOUR_COLLECTOR_ID'     # From your Scraper Studio collector (c_xxxx)
+API_TOKEN    = os.environ.get('BRIGHT_DATA_API_TOKEN', 'BRIGHT_DATA_API_KEY')
+COLLECTOR_ID = os.environ.get('BRIGHT_DATA_COLLECTOR_ID', 'YOUR_COLLECTOR_ID')
 
-API_BASE = 'https://api.brightdata.com'
+API_BASE          = 'https://api.brightdata.com'
+POLL_INTERVAL_S   = 5
+MAX_POLL_ATTEMPTS = 60  # ~5 minutes total
+MAX_RETRIES       = 3   # for transient HTTP failures
 
 # ========================================
 # SAMPLE INPUT
 # Each item must match the input schema defined in your collector.
-# The default schema is a single field: `url`.
+# The default assumes a single `url` field.
 # ========================================
 SAMPLE_URLS = [
     {"url": "https://ecommerce-shop-brd.vercel.app/product/echo-portable-speaker"},
@@ -33,34 +41,47 @@ SAMPLE_URLS = [
 
 
 # ========================================
-# CORE: thin wrapper around requests
+# CORE: HTTP request + retry/backoff
+# Retries transient errors (5xx, network) with exponential backoff (1s, 2s, 4s).
+# 4xx errors fail fast - they signal a client mistake, not a transient issue.
 # ========================================
 def api_request(method, path, body=None):
-    """Send a request to the Bright Data API and return the raw response text."""
     url = f"{API_BASE}{path}"
     headers = {
         'Authorization': f'Bearer {API_TOKEN}',
         'Content-Type': 'application/json',
         'Accept': 'application/json',
     }
-    response = requests.request(method, url, headers=headers, json=body, timeout=60)
-    if response.status_code >= 400:
-        raise RuntimeError(f"HTTP {response.status_code}: {response.text}")
-    return response.text
+    last_err = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = requests.request(method, url, headers=headers, json=body, timeout=60)
+            if 400 <= response.status_code < 500:
+                raise RuntimeError(f"HTTP {response.status_code}: {response.text}")
+            if response.status_code >= 500:
+                last_err = RuntimeError(f"HTTP {response.status_code}: {response.text}")
+            else:
+                return response.text
+        except (requests.RequestException, RuntimeError) as err:
+            if isinstance(err, RuntimeError) and str(err).startswith("HTTP 4"):
+                raise
+            last_err = err
+        if attempt < MAX_RETRIES - 1:
+            backoff = 2 ** attempt
+            print(f"{Fore.YELLOW}Retrying in {backoff}s...")
+            time.sleep(backoff)
+    raise last_err
 
 
 # ========================================
 # SCRAPER FLOW
-# 1. POST /dca/trigger          -> { collection_id }
-# 2. GET  /dca/dataset?id=<id>  -> poll until results are returned
+# 1. POST /dca/trigger         -> { collection_id }
+# 2. GET  /dca/dataset?id=<id> -> poll until results are returned
 # ========================================
 def run_scraper(inputs):
     print(f"{Fore.CYAN}{Style.BRIGHT}Starting Scraper Studio collector...")
     print(f"{Fore.BLUE}Queueing {len(inputs)} input(s)")
-    print(f"{Fore.LIGHTBLACK_EX}Request body:")
-    print(f"{Fore.LIGHTBLACK_EX}{json.dumps(inputs, indent=2)}")
 
-    # 1. Trigger
     trigger_path = f"/dca/trigger?collector={COLLECTOR_ID}&queue_next=1"
     trigger_response = api_request('POST', trigger_path, inputs)
     snapshot_id = json.loads(trigger_response).get('collection_id')
@@ -68,17 +89,14 @@ def run_scraper(inputs):
         raise RuntimeError(f"Trigger returned no collection_id: {trigger_response}")
     print(f"{Fore.GREEN}Job queued. Snapshot ID: {snapshot_id}")
 
-    # 2. Poll for results
     print(f"{Fore.YELLOW}Polling for results...")
-    max_attempts = 60  # up to ~5 minutes at 5s intervals
-    for attempt in range(1, max_attempts + 1):
-        time.sleep(5)
+    for attempt in range(1, MAX_POLL_ATTEMPTS + 1):
+        time.sleep(POLL_INTERVAL_S)
         dataset_response = api_request('GET', f"/dca/dataset?id={snapshot_id}")
-        ready = _is_ready(dataset_response)
-        print(f"{Fore.LIGHTBLACK_EX}Attempt {attempt}/{max_attempts} - {'ready' if ready else 'building'}")
-        if ready:
+        if _is_ready(dataset_response):
             print(f"{Fore.GREEN}{Style.BRIGHT}Results downloaded.")
             return dataset_response
+        print(f"{Fore.LIGHTBLACK_EX}Attempt {attempt}/{MAX_POLL_ATTEMPTS} - building")
 
     raise TimeoutError("Timed out waiting for collector to finish")
 
@@ -93,8 +111,16 @@ def _is_ready(body):
 
 
 # ========================================
-# OUTPUT
+# LIBRARY HELPERS
 # ========================================
+def trigger_with_url(url):
+    return run_scraper([{"url": url}])
+
+
+def trigger_with_urls(urls):
+    return run_scraper([{"url": u} for u in urls])
+
+
 def save_results(data, filename=None):
     if filename is None:
         ts = datetime.now().isoformat().replace(':', '-').replace('.', '-')
@@ -112,14 +138,14 @@ def main():
     print(f"{Fore.MAGENTA}==============================")
 
     if API_TOKEN == 'BRIGHT_DATA_API_KEY' or COLLECTOR_ID == 'YOUR_COLLECTOR_ID':
-        print(f"{Fore.RED}{Style.BRIGHT}Set API_TOKEN and COLLECTOR_ID in index.py before running.")
-        print(f"{Fore.YELLOW}API token: https://brightdata.com/cp/setting")
-        print(f"{Fore.YELLOW}Collector ID: open your collector in Scraper Studio - the ID starts with c_")
+        print(f"{Fore.RED}{Style.BRIGHT}Missing config. Set BRIGHT_DATA_API_TOKEN and BRIGHT_DATA_COLLECTOR_ID:")
+        print(f"{Fore.YELLOW}  - via .env file:  cp .env.example .env  then edit")
+        print(f"{Fore.YELLOW}  - or via shell:   export BRIGHT_DATA_API_TOKEN=...")
         return
 
     try:
-        results = run_scraper(SAMPLE_URLS)
-        save_results(results)
+        data = run_scraper(SAMPLE_URLS)
+        save_results(data)
         print(f"{Fore.GREEN}{Style.BRIGHT}\nDone.")
     except Exception as err:
         print(f"{Fore.RED}{Style.BRIGHT}Failed: {Fore.RED}{err}")
