@@ -1,0 +1,6 @@
+{
+  "title": "Bright Data Scraper Studio (Python)",
+  "description": "Starter template for the Bright Data Scraper Studio DCA API with Python",
+  "iconUrl": "https://raw.githubusercontent.com/brightdata/bright-data-scraper-studio-python-project/main/.codesandbox/icon.png",
+  "tags": ["python", "brightdata", "scraper studio", "web scraping"]
+}
